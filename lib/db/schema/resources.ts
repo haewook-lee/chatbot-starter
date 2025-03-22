@@ -10,7 +10,13 @@ export const resources = pgTable("resources", {
     .primaryKey()
     .$defaultFn(() => nanoid()),
   content: text("content").notNull(),
-
+  source: varchar("source", { length: 255 }),
+  title: varchar("title", { length: 255 }),
+  url: varchar("url", { length: 255 }),
+  author: varchar("author", { length: 255 }),
+  publicationDate: timestamp("publication_date"),
+  gameName: varchar("game_name", { length: 255 }),
+  category: varchar("category", { length: 255 }),
   createdAt: timestamp("created_at")
     .notNull()
     .default(sql`now()`),
@@ -21,7 +27,15 @@ export const resources = pgTable("resources", {
 
 // Schema for resources - used to validate API requests
 export const insertResourceSchema = createSelectSchema(resources)
-  .extend({})
+  .extend({
+    source: z.string().optional(),
+    title: z.string().optional(),
+    url: z.string().optional(),
+    author: z.string().optional(),
+    publicationDate: z.date().optional(),
+    gameName: z.string().optional(),
+    category: z.string().optional(),
+  })
   .omit({
     id: true,
     createdAt: true,
