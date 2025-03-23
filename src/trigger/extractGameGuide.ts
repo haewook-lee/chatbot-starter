@@ -1,7 +1,6 @@
 import { logger, task } from "@trigger.dev/sdk/v3";
-import { openai } from "@ai-sdk/openai";
-import { generateObject } from "ai";
-import axios from "axios";
+import { createClient } from "@supabase/supabase-js";
+import puppeteer from "puppeteer";
 import { z } from "zod";
 
 const inputSchema = z.object({
@@ -9,6 +8,15 @@ const inputSchema = z.object({
 });
 
 type InputType = z.infer<typeof inputSchema>;
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+if (!supabaseUrl || !supabaseAnonKey) {
+  throw new Error("Supabase URL and Anon Key are required.");
+}
+
+const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 export const extractGameGuide = task({
   id: "extract-game-guide",
@@ -18,28 +26,43 @@ export const extractGameGuide = task({
   },
   run: async (payload: InputType, { ctx }) => {
     try {
-      const response = await axios.get(payload.url);
-      const guideContent = response.data;
+      const browser = await puppeteer.launch();
+      const page = await browser.newPage();
 
-      logger.log("Game guide content", { guideContent });
+      await page.goto(payload.url, { waitUntil: "networkidle2", timeout: 60000 });
 
-      // const result = await generateObject({
-      //   model: openai("gpt-4-turbo"),
-      //   system: `You are a helpful assistant that knows a lot about video games and what a user might want to know about it if they're playing it.
-      //   You will be given a url of a game guide and you will need to extract the game guide from the url.
-      //   You will need to return a json object that is ready for data chunking and embedding.
+      await page.waitForSelector('pre[id^="faqspan-"]', { timeout: 60000 });
 
-      //   Ignore any information regarding the author of the guide, the date of the guide, or any other information that is not relevant to the game guide.
-      //   `,
-      // prompt: `Extract the game guide from the following url: ${payload.url}`,
-      // schema: z.object({
-      //   gameGuide: z.string(),
-      // }),
-      // });
+      const preTags = await page.$$('pre[id^="faqspan-"]');
 
-      // logger.log("Game guide extracted", { result });
+      let guideContent = "";
 
-      // return result;
+      for (const preTag of preTags) {
+        const text = await page.evaluate((el) => el.innerText, preTag);
+        guideContent += text + "\n";
+      }
+
+      await browser.close();
+
+      // Insert data into Supabase
+      const { data, error } = await supabase.from("game_guides").insert([
+        {
+          url: payload.url,
+          content: guideContent,
+        },
+      ]);
+
+      if (error) {
+        logger.error("Supabase insert error:", { error });
+        throw error;
+      }
+
+      logger.info("Game guide stored in Supabase", {
+        supabaseData: data,
+        length: guideContent.length,
+      });
+
+      return { supabaseData: data };
     } catch (error) {
       logger.error("Error extracting game guide", { error });
       throw error;
