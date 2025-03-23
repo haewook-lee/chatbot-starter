@@ -18,6 +18,14 @@ if (!supabaseUrl || !supabaseAnonKey) {
 
 const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
+// Verification Function
+function isGameGuide(content: string): boolean {
+  // Check for keywords like "walkthrough," "strategy," "items," etc.
+  const keywords = ["walkthrough", "strategy", "items", "level", "boss", "controls"];
+  const lowerCaseContent = content.toLowerCase();
+  return keywords.some((keyword) => lowerCaseContent.includes(keyword));
+}
+
 export const extractGameGuide = task({
   id: "extract-game-guide",
   maxDuration: 600,
@@ -26,6 +34,23 @@ export const extractGameGuide = task({
   },
   run: async (payload: InputType, { ctx }) => {
     try {
+      // Check if guide already exists
+      const { data: existingGuide, error: selectError } = await supabase
+        .from("game_guides")
+        .select("url")
+        .eq("url", payload.url);
+
+      if (selectError) {
+        logger.error("Supabase select error:", { error: selectError });
+        throw selectError;
+      }
+
+      if (existingGuide && existingGuide.length > 0) {
+        logger.info("Guide already exists for URL:", { url: payload.url });
+        return { url: payload.url, exists: true }; // Indicate guide exists
+      }
+
+      // Extract guide content
       const browser = await puppeteer.launch();
       const page = await browser.newPage();
 
@@ -62,7 +87,13 @@ export const extractGameGuide = task({
         length: guideContent.length,
       });
 
-      return { supabaseData: data };
+      // Verification Step
+      if (!isGameGuide(guideContent)) {
+        throw new Error("Extracted content is not a game guide.");
+      }
+
+      // Return the url of the inserted row
+      return { url: payload.url, exists: false };
     } catch (error) {
       logger.error("Error extracting game guide", { error });
       throw error;
